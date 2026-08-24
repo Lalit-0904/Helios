@@ -1,311 +1,181 @@
+# Detect Objects on Camera
 
+The **Detect Objects on Camera** example lets you detect objects on a live feed from a USB camera and visualize bounding boxes around the detections in real-time.
 
+**Note:** This example must be run in **Network Mode** in the Arduino App Lab, since it requires a USB-C hub and a USB camera.
 
-# SATHI: Smart Adaptive Thinking & Hostel Intelligence
+![Detect Objects on Camera](assets/docs_assets/video-object-detection.png)
 
-## Overview
+This example uses a pre-trained model to detect objects on a live video feed from a camera. The workflow involves continuously getting the frames from a USB camera, processing it through an AI model using the `video_objectdetection` Brick, and displaying the bounding boxes around detections. The App is managed from an interactive web interface.
 
-SATHI is an **autonomous, on-device AI companion** built on Arduino UNO Q that monitors your study/relax patterns and responds with intelligent feedback. It runs entirely offline—no cloud, no phone dependency—making it a true edge-AI system for hostel environments.
+*This example is based on the Arduino UNO Q, but also works on Arduino VENTUNO Q.*
 
-**Core insight:** Rather than waiting for voice commands, SATHI watches what you're doing and responds autonomously.
+## Brick Used
 
----
+The example uses the following Bricks:
 
-## What SATHI Does
+- `web_ui`: Brick to create a web interface to display the classification results and model controls.
+- `video_objectdetection`: Brick to classify objects within a live video feed from a camera.
 
-### **1. Behavioral Monitoring**
-- **Camera-based posture detection:** Classifies whether you're working (focused, upright at desk) or relaxing (reclined, away from desk)
-- **Real-time state inference:** Runs YOLOv8-Nano person detection on NPU to identify study vs. relax modes
-- **Passive tracking:** No manual input needed—system adapts automatically
+## Hardware Requirements
 
-### **2. Adaptive Environment Control**
-- **Study Mode** → Cool white display/notification (70% intensity), optimal focus signal
-- **Relax Mode** → Warm amber display/notification (30% intensity), calm atmosphere signal
-- **Away Mode** → System dormant, awaiting re-engagement
-- **Mode switching** → Automatic based on posture/location changes
+### Hardware
 
-### **3. Intelligent Conversational AI**
-- **Local LLM running on-device:** Qwen2-1.5B (INT4 quantized) for offline inference
-- **Text-based chat interface:** Ask questions, get written responses
-- **Context-aware:** System knows your current mode (working/relaxing) and responds appropriately
-- **No internet needed:** All processing happens on the board
+- Arduino UNO Q (x1) or Arduino VENTUNO Q (x1)
+- USB camera (x1)
+- USB-C® hub adapter with external power (x1) _(only for UNO Q)_
+- A power supply (5 V, 3 A) for the USB hub (e.g. a phone charger) _(only for UNO Q)_
+- Personal computer with internet access
 
-### **4. Smart Distraction Alerts**
-- **Posture-based detection:** Slouching, stillness >90 seconds trigger gentle nudges
-- **Non-punitive reminders:** Text alert displayed with motivational message
-- **Gradual escalation:** First alert is soft, subsequent alerts increase intensity
+## How to Use the Example
 
----
+1. Connect the USB-C hub to the UNO Q and the USB camera.
 
-## Hardware
+   ![Hardware setup](assets/docs_assets/hardware-setup.png)
 
-### Components
-- **Arduino UNO Q** (Qualcomm QRB2210 + STM32U585) — dual processor for distributed AI
-- **USB Camera** — person detection and posture classification
-- **Type-C Hub** — connects camera to main board
-- **Display/Monitor** — shows SATHI status, alerts, and responses (via connected screen or terminal output)
+2. Attach the external power supply to the USB-C hub to power everything.
 
-### Architecture
-- **Brain Module:** Arduino UNO Q + hub (central AI processing)
-- **Sensor Suite:** USB Camera (environmental awareness)
-- **Output:** Screen/terminal display (feedback and LLM responses)
+3. Run the App from the top navigation bar.
 
----
+4. The App should open automatically in the web browser. You can open it manually via `<board-name>.local:7000`.
 
-## Software Stack
+5. Position any object in front of the camera and watch as the App detects and recognizes them.
 
-### Layers
+Try with one of the following objects for a special reaction:
 
-1. **MCU Firmware (sathi_hw.ino)** — STM32U585 side
-   - System status management
-   - RPC bridge communication with Linux
-   - Sensor data coordination
+- Cat
+- Cell phone
+- Clock
+- Cup
+- Dog
+- Potted plant
 
-2. **Vision Pipeline (vision.py)** — Linux/NPU side
-   - YOLOv8-Nano on NPU for person detection
-   - Zone-based posture classification (studying vs. relaxing)
-   - Real-time state machine (STUDYING / RELAXING / AWAY)
+![Example of special reaction](assets/docs_assets/special-detection.png)
 
-3. **LLM Inference (llm.py)** — Linux side
-   - Qwen2-1.5B (INT4 quantized) model loading and inference
-   - Token generation at ~5-10 tokens/sec (acceptable latency)
-   - Text response generation
+## How it Works
 
-4. **Context Manager (context.py)** — Linux side [THE BRAIN]
-   - State machine orchestration
-   - Decision logic (when to alert, change mode, activate LLM)
-   - Temporal pattern recognition
+This example hosts a Web UI where we can see the video input from the camera connected via USB. The video stream is then processed using the `video_objectdetection` Brick. When an object is detected, it is logged along with the confidence score (e.g. 95% potted plant).
 
-5. **RPC Bridge (rpc_bridge.py)** — Both sides
-   - Arduino Bridge protocol for Linux ↔ MCU communication
-   - System state synchronization
+Here is a brief explanation of the full-stack application:
+
+### 🔧 Backend (main.py)
+
+- Initializes the app Bricks:
+  - **WebUI** (`ui = WebUI()`): channel to push messages to the frontend.
+  - **VideoObjectDetection** (`detection_stream = VideoObjectDetection()`): runs object detection on the video stream.
+
+- Wires detection events to actions using callbacks:
+  - `on_detect_all(send_detections_to_ui)`: sends `{ content, confidence, timestamp }` via `ui.send_message("detection", ...)`
+
+- **Controls**:
+  - Listens for `override_th` → updates detection threshold
+
+- Exposes:
+  - **Realtime messaging**: publishes detection updates to the frontend via `ui.send_message("detection", message=entry)` so the UI can display live detections.
+
+- Runs with `App.run()` which starts the internal event loop and keeps the detection stream and UI messaging alive.
 
 ---
 
-## Key Detection Logic
+### 💻 Frontend (index.html + app.js)
 
-### **Study Mode Detection**
-```python
-Conditions:
-  - Person detected in desk zone (camera sees you at desk)
-  - Upright posture (aspect_ratio > 1.2, bounding box tall & narrow)
-  - Sustained presence >30 seconds
+- **Video feed**
+  - iframe auto-retries /embed until the camera stream is available
+
+- **Controls**
+  - Slider, numeric input, and reset button adjust threshold live
+  - Updates sent to backend with: `ui.send_message("override_th", value)`
+
+- **Feedback**
+  - Shows GIF + text for known objects (dog, cat, cup, cell phone, clock, potted plant)
+
+- **Recent detections**
+  - Displays the last 5 detections with percentage and timestamp
+
+- **Connection status**
+  - Shows an error message if the WebSocket connection drops
+
+---
+
+## Understanding the Code
+
+Once the application is running, you can open it in your browser by navigating to `<BOARD-IP-ADDRESS>:7000`.  
+
+At that point, the device begins performing the following:
+
+- Serving the **object detection UI** and exposing realtime transports.
+
+  The UI is hosted by the `WebUI` Brick and communicates with the backend via WebSocket.  
+
+  The backend pushes detection messages whenever new objects are found.
+
+  ```python
+  from arduino.app_bricks.web_ui import WebUI
+  from arduino.app_bricks.video_objectdetection import VideoObjectDetection
+  from datetime import datetime, UTC
+
+  ui = WebUI()
+  detection_stream = VideoObjectDetection()
+
+  ui.on_message("override_th",
+                lambda sid, threshold: detection_stream.override_threshold(threshold))
+
+  detection_stream.on_detect_all(send_detections_to_ui)
+  ```
+
+  - `detection` (WebSocket message): JSON entry with label, confidence, and timestamp sent to the UI.
+  - `override_th` (WebSocket → backend): adjusts the confidence threshold live.
+
+- Processing detections and broadcasting updates.
+
+  When the model detects objects, the backend:
+
+  1. Iterates over all detected objects with their confidence scores.
+
+  2. Attaches an ISO 8601 UTC timestamp.
+
+  3. Publishes each detection as a JSON entry to the frontend channel `detection`.
+
+  ```python
+  def send_detections_to_ui(detections: dict):
+      for key, value in detections.items():
+          entry = {
+              "content": key,
+              "confidence": value,
+              "timestamp": datetime.now(UTC).isoformat()
+          }
+          ui.send_message("detection", message=entry)
+  ```
+
+- Rendering and interacting on the frontend.
+
+  The **index.html + app.js** bundle defines the interface:
   
-Action:
-  - Display: Cool white (60% intensity)
-  - System state: STUDYING
-  - Log: Session started
-```
+  - A **video feed iframe** auto-retries `/embed` until the camera stream is live.
+  - A **confidence control** (slider + input + reset) lets the user adjust the detection threshold.
+  - A **feedback section** shows animations and messages for known classes (cat, dog, cup, clock, potted plant, etc.).
+  - A **recent detections list** displays the latest 5 detections with percentage and timestamp.
 
-### **Distraction Detection**
-```python
-Conditions (while in STUDY mode):
-  - Posture changes (slouching, aspect_ratio drops)
-  - OR very still >90 seconds (motion_score near zero)
-  
-Action:
-  - Display: "Focus. You're studying right now."
-  - Alert intensity: Medium
-  - Then returns to normal STUDY mode if you refocus
-```
+  ```javascript
+  const ui = new WebUI();
 
-### **Relax Mode Detection**
-```python
-Conditions:
-  - Person reclined (aspect_ratio < 1.0, lying down)
-  - OR away from desk for >5 minutes
-  - OR time-based trigger (after 9pm)
-  
-Action:
-  - Display: Warm amber (30% intensity)
-  - System state: RELAXING
-  - No alerts in this mode
-```
+  ui.on_message('detection', (message) => {
+    printDetection(message); // update history
+    renderDetections(); // redraw the list
+    updateFeedback(message); // update feedback panel
+  });
+  ```
 
-### **LLM Conversation**
-```python
-User types query or voice input (if microphone added later)
-  ↓
-Intent classification
-  ↓
-Qwen2-1.5B generates response
-  ↓
-Text displayed on screen
-  ↓
-Response includes context awareness (e.g., "You're studying, so here's how...")
-```
+  - `detection` (WebSocket): received whenever the backend publishes results.
+  - The slider and input dynamically update the backend threshold (`override_th`).
+  - If the connection drops, an error banner is shown (`error-container`).
 
----
+- Executing the event loop.
 
-## Why This Is Physical AI
+  Finally, the backend keeps everything alive with:
 
-**Physical AI requires three elements:**
+  ```python
+  App.run()
+  ```
 
-1. **Sensing** ✓ — Camera sees you, determines posture and location
-2. **On-device thinking** ✓ — YOLOv8-Nano runs on NPU, LLM runs locally
-3. **Physical action** ✓ — Display changes, system state updates
-
-Without any one, it's not Physical AI:
-- Without sensing: Just automation (boring)
-- Without on-device thinking: Just cloud-dependent IoT (not impressive)
-- Without feedback: Just processing (not a product)
-
-SATHI does all three, making it a genuinely autonomous physical AI system.
-
----
-
-## NPU Justification
-
-**Why the Qualcomm NPU is essential (not overkill):**
-
-| Task | Without NPU | With NPU |
-|------|------------|----------|
-| **Posture inference at 15fps** | 200ms/frame = 5fps (too slow, misses distraction) | 30ms/frame = 15fps (real-time) |
-| **LLM token generation** | 2-3 tokens/sec = 60+ seconds per response (unusable) | 5-10 tokens/sec = 8-15 sec response (conversational) |
-| **Running both simultaneously** | System bottlenecks, one loop fails | Both run smoothly in parallel |
-
-A standard Arduino Uno, Nano, or Raspberry Pi Zero cannot handle vision + LLM inference at acceptable performance. The Qualcomm NPU is the load-bearing component.
-
----
-
-## File Structure
-
-```
-sathi/
-├── firmware/
-│   └── sathi_hw.ino                    # STM32 firmware
-├── software/
-│   ├── vision.py                       # YOLOv8-Nano posture detection
-│   ├── llm.py                          # Qwen2-1.5B LLM inference
-│   ├── context.py                      # State machine (the brain)
-│   └── rpc_bridge.py                   # Arduino Bridge communication
-├── models/
-│   ├── yolov8n_int8.onnx              # Quantized posture model
-│   └── qwen2-1.5b-q4.gguf             # LLM model
-├── data/
-│   ├── config.json                    # Zone calibration, thresholds
-│   └── session_log.csv                # Study session tracking
-├── docs/
-│   ├── schematic.pdf                  # Circuit diagram
-│   ├── BOM.csv                        # Bill of materials
-│   └── DESIGN.md                      # Architecture overview
-└── README.md                           # This file
-```
-
----
-
-## Setup & Calibration
-
-### **One-time calibration (5 minutes):**
-
-1. **Zone calibration:**
-   - Run `python calibrate_zones.py`
-   - Click 4 corners of your desk area → saves as study zone
-   - Click 4 corners of your relax area → saves as relax zone
-
-2. **Posture baselines:**
-   - Sit at desk normally (upright) → system records baseline aspect ratio
-   - Slouch/lean back → system records distracted aspect ratio
-
-3. **Lens calibration (if needed):**
-   - Print checkerboard pattern
-   - Take 15 calibration photos
-   - Run OpenCV calibration script → saves camera matrix + distortion coeffs
-
-### **Daily operation:**
-- System starts automatically on power-up
-- All inference happens on-device
-- Data is logged locally to CSV file
-
----
-
-## Competition Narrative
-
-> "Most smart homes wait for voice commands. SATHI watches what you're doing and responds automatically.
->
-> Sitting at your desk? The system recognizes study mode. Getting distracted? An alert appears. Want to know something? Ask SATHI, get an instant offline answer.
->
-> The system sees you via AI, understands your context, and provides real-time feedback.
->
-> No commands. No phone. No cloud. Just a room that pays attention."
-
----
-
-## Key Achievements
-
-- ✅ **Fully on-device inference** — No internet dependency, zero latency bottleneck
-- ✅ **Real-time dual AI** — Vision + LLM running simultaneously on one board
-- ✅ **Behavioral understanding** — Not just command-response, but context-aware autonomy
-- ✅ **Real-time feedback** — Display shows system state and alerts
-- ✅ **Practical and useful** — Solves real hostel room problems
-
----
-
-## Installation & Running
-
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/sathi.git
-cd sathi
-
-# Install Python dependencies
-pip install opencv-python onnxruntime llama-cpp-python numpy
-
-# Flash Arduino firmware
-# (Use Arduino IDE to upload firmware/sathi_hw.ino to UNO Q STM32 side)
-
-# Run calibration (first time only)
-python calibrate_zones.py
-
-# Start SATHI
-python context.py
-```
-
----
-
-## Roadmap & Future
-
-- [ ] Add exercise/health tracking mode
-- [ ] Implement weekly study summary dashboard
-- [ ] Add emotion detection from posture analysis
-- [ ] Integration with calendar/schedule
-- [ ] Battery operation + low-power sleep states
-
----
-
-## Technical Specs
-
-| Spec | Value |
-|------|-------|
-| **Board** | Arduino UNO Q (Qualcomm QRB2210 + STM32U585) |
-| **Camera FPS** | 15fps (YOLOv8-Nano on NPU) |
-| **LLM Model** | Qwen2-1.5B INT4 quantized |
-| **LLM Latency** | 8-15 seconds per response (5-10 tokens/sec) |
-| **Posture Detection Accuracy** | 85%+ (YOLOv8-Nano) |
-| **Power Consumption** | ~3W avg (idle), ~6W under load |
-| **Cost** | ~₹3,500 (board + components) |
-
----
-
-## License
-
-MIT License — Open source, fork and adapt freely.
-
----
-
-## Team
-
-Built for the **Arduino Physical AI Challenge India 2026** — Smart Homes & Consumer AI Track
-
----
-
-## Contact & Support
-
-For questions, issues, or contributions:
-- Open an issue on GitHub
-- Check `/docs` folder for detailed documentation
-- See `/software` for code-level comments
-
----
-
-**"A room that thinks. A home that understands."**
+  This maintains the object detection stream, callback hooks, threshold overrides, and WebSocket communication with the frontend.
